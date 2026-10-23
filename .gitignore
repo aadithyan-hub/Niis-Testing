@@ -1,0 +1,6 @@
+backend/local.env
+backend/*.sqlite3
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+backend/keys/
