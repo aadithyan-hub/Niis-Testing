@@ -19,4 +19,5 @@ venv\Scripts\python.exe "%~dp0make_keys.py" || (pause & exit /b 1)
 venv\Scripts\python.exe manage.py migrate --noinput
 venv\Scripts\python.exe manage.py shell -c "exec(open(r'%~dp0seed.py', encoding='utf-8').read())"
 venv\Scripts\python.exe manage.py shell -c "exec(open(r'%~dp0seed_media.py', encoding='utf-8').read())"
+venv\Scripts\python.exe manage.py shell -c "exec(open(r'%~dp0seed_instagram.py', encoding='utf-8').read())"
 pause

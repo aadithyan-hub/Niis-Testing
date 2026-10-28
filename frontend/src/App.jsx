@@ -1,9 +1,12 @@
-// Throwaway tester for NIIS APIs: social media publishing (sheet row 57) and
-// the media library (gap #26, in MediaLibrary.jsx).
+// Throwaway tester for NIIS APIs: social media publishing (sheet row 57),
+// the media library (gap #26, in MediaLibrary.jsx) and the mobile apps'
+// reCAPTCHA check (MobileRecaptcha.jsx).
 // Not production code: plain Tailwind, no routing.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { makeApi } from './api.js'
+import InstagramSim from './InstagramSim.jsx'
 import MediaLibrary from './MediaLibrary.jsx'
+import MobileRecaptcha from './MobileRecaptcha.jsx'
 
 const DEFAULT_BASE = 'http://127.0.0.1:8001'
 
@@ -106,30 +109,40 @@ function Login({ api, user, onLogin, onLogout, setMessage, tab }) {
   )
 }
 
-// ── Connected Pages (admin) ─────────────────────────────────────────────────
-function Accounts({ api, accounts, reload, setMessage }) {
+function PlatformBadge({ value }) {
+  const colors = { facebook: 'bg-blue-100 text-blue-900', instagram: 'bg-pink-100 text-pink-900' }
+  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[value] || 'bg-gray-100'}`}>{value}</span>
+}
+
+const isSimAccount = account => account?.platform === 'instagram' && (account.page_name || '').includes('simulated')
+
+// ── Connected accounts (admin) ──────────────────────────────────────────────
+function Accounts({ api, accounts, reload, setMessage, sim }) {
+  const [platform, setPlatform] = useState('facebook')
   const [pageId, setPageId] = useState('')
   const [token, setToken] = useState('')
   const [busy, run] = useAction(setMessage)
+  const instagram = platform === 'instagram'
 
   const connect = () => run(async () => {
-    await api('POST', '/api/v1/admin/social/accounts/', { platform: 'facebook', page_id: pageId.trim(), access_token: token.trim() })
+    await api('POST', '/api/v1/admin/social/accounts/', { platform, page_id: pageId.trim(), access_token: token.trim() })
     setToken('')
     await reload()
-  }, 'Page connected')
+  }, instagram ? 'Instagram account connected' : 'Page connected')
 
   const act = (fn, text) => run(async () => { await fn(); await reload() }, text)
 
   return (
-    <Section title="1. Connected Facebook Pages (admin)" right={<Btn onClick={reload}>Reload</Btn>}>
-      {accounts === null && <p className="text-sm text-gray-600">Log in as <b>testadmin</b> to manage Pages (editors get 403 here).</p>}
-      {accounts && accounts.length === 0 && <p className="text-sm text-gray-600">No Page connected yet.</p>}
+    <Section title="1. Connected accounts: Facebook Pages and Instagram (admin)" right={<Btn onClick={reload}>Reload</Btn>}>
+      {accounts === null && <p className="text-sm text-gray-600">Log in as <b>testadmin</b> to manage accounts (editors get 403 here).</p>}
+      {accounts && accounts.length === 0 && <p className="text-sm text-gray-600">No account connected yet.</p>}
       {accounts && accounts.length > 0 && (
         <table className="w-full text-sm mb-4">
-          <thead><tr className="text-left border-b"><th>Page</th><th>Token</th><th>Expires</th><th>Active</th><th>Last error</th><th></th></tr></thead>
+          <thead><tr className="text-left border-b"><th>Platform</th><th>Account</th><th>Token</th><th>Expires</th><th>Active</th><th>Last error</th><th></th></tr></thead>
           <tbody>
             {accounts.map(a => (
               <tr key={a.id} className="border-b align-top">
+                <td className="py-1"><PlatformBadge value={a.platform} />{isSimAccount(a) && <div className="text-xs text-gray-500">simulated</div>}</td>
                 <td className="py-1">{a.page_name || '-'}<div className="text-xs text-gray-500">{a.page_id}</div></td>
                 <td><Badge value={a.token_status} /></td>
                 <td className="text-xs">{a.token_expires_at ? new Date(a.token_expires_at).toLocaleString() : 'never / unknown'}</td>
@@ -141,7 +154,9 @@ function Accounts({ api, accounts, reload, setMessage }) {
                     ? <Btn disabled={busy} onClick={() => act(() => api('DELETE', `/api/v1/admin/social/accounts/${a.id}/`), 'Deactivated')}>Deactivate</Btn>
                     : <Btn disabled={busy} onClick={() => act(() => api('PATCH', `/api/v1/admin/social/accounts/${a.id}/`, { is_active: true }), 'Activated')}>Activate</Btn>}
                   <Btn disabled={busy} onClick={() => {
-                    const t = window.prompt('New access token (Page token or user token)')
+                    const t = window.prompt(a.platform === 'instagram'
+                      ? 'New token (user token of a Page manager, or the linked Page token; SIM-... for the simulated account)'
+                      : 'New access token (Page token or user token)')
                     if (t) act(() => api('PATCH', `/api/v1/admin/social/accounts/${a.id}/`, { access_token: t.trim() }), 'Token replaced')
                   }}>Replace token</Btn>
                 </td>
@@ -151,24 +166,53 @@ function Accounts({ api, accounts, reload, setMessage }) {
         </table>
       )}
       {accounts !== null && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end text-sm">
-          <label>Page ID<input className={input} value={pageId} onChange={e => setPageId(e.target.value)} placeholder="1340308269168285" /></label>
-          <label>Access token (Page or user token)<input className={input} type="password" value={token} onChange={e => setToken(e.target.value)} /></label>
-          <Btn disabled={busy || !pageId || !token} onClick={connect}>Connect Page</Btn>
+        <div className="space-y-2 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+            <label>Platform
+              <select className={input} value={platform} onChange={e => setPlatform(e.target.value)}>
+                <option value="facebook">Facebook Page</option>
+                <option value="instagram">Instagram account</option>
+              </select>
+            </label>
+            <label>{instagram ? 'Instagram account ID' : 'Page ID'}
+              <input className={input} value={pageId} onChange={e => setPageId(e.target.value)} placeholder={instagram ? '17841400000000000' : '1340308269168285'} />
+            </label>
+            <label>{instagram ? 'Token (user token of a Page manager, or the linked Page token)' : 'Access token (Page or user token)'}
+              <input className={input} type={_isSim(token) ? 'text' : 'password'} value={token} onChange={e => setToken(e.target.value)} />
+            </label>
+            <Btn disabled={busy || !pageId || !token} onClick={connect}>{instagram ? 'Connect Instagram account' : 'Connect Page'}</Btn>
+          </div>
+          {instagram && (
+            <div className="p-2 bg-pink-50 border border-pink-200 rounded text-xs space-y-1">
+              <div><b>Simulated account</b> (nothing leaves this computer): ID <code>{sim?.sim_ig_id || '...'}</code> with a token from section 4, e.g. <code>SIM-USER</code>.
+                {sim && <Btn className="ml-2" onClick={() => { setPageId(sim.sim_ig_id); setToken('SIM-USER') }}>Fill simulated</Btn>}
+              </div>
+              <div><b>Real account</b>: connect and Verify go to the real Meta (this computer must reach graph.facebook.com). Posting to a real account is <b>blocked by this tester</b> and never sent.</div>
+            </div>
+          )}
         </div>
       )}
     </Section>
   )
 }
 
-// ── Content + "Post to Facebook" ────────────────────────────────────────────
-function PostForm({ api, content, accounts, onDone, setMessage }) {
+function _isSim(token) { return token.trim().startsWith('SIM') }
+
+// ── Content + "Post to Facebook / Instagram" ────────────────────────────────
+// Editors cannot list accounts (403), so the post form also takes a pasted id.
+function PostForm({ api, content, accounts, onDone, setMessage, storageBase }) {
   const [accountId, setAccountId] = useState('')
   const [message, setMsg] = useState('')
   const [when, setWhen] = useState('')
   const [includeImage, setIncludeImage] = useState(true)
   const [imageUrl, setImageUrl] = useState('')
   const [busy, run] = useAction(setMessage)
+
+  const account = (accounts || []).find(a => a.id === accountId)
+  const instagram = account?.platform === 'instagram'
+  const image = includeImage ? (imageUrl.trim() || content.featured_image_url || '') : ''
+  const outside = image && storageBase && !image.startsWith(storageBase)
+  const target = account ? (instagram ? 'Instagram' : 'Facebook') : 'social media'
 
   const submit = () => run(async () => {
     const body = { include_image: includeImage }
@@ -183,13 +227,32 @@ function PostForm({ api, content, accounts, onDone, setMessage }) {
 
   return (
     <div className="mt-3 p-3 border border-dashed border-gray-400 rounded text-sm space-y-2">
-      <div className="font-medium">Post "{content.title}" to Facebook</div>
-      <label className="block">Page
+      <div className="font-medium">Post "{content.title}" to {target}</div>
+      <div className="flex gap-3 items-start">
+        {content.featured_image_url
+          ? <a href={content.featured_image_url} target="_blank" rel="noreferrer"><img src={content.featured_image_url} alt="" className="h-20 border bg-gray-100" /></a>
+          : <div className="h-20 w-20 border bg-gray-100 text-xs text-gray-500 flex items-center justify-center text-center">no featured image</div>}
+        <div className="text-xs text-gray-600 break-all">{content.featured_image_url || ''}</div>
+      </div>
+      <label className="block">Account
         <select className={input} value={accountId} onChange={e => setAccountId(e.target.value)}>
-          <option value="">(auto: the only active Page)</option>
-          {(accounts || []).filter(a => a.is_active).map(a => <option key={a.id} value={a.id}>{a.page_name || a.page_id}</option>)}
+          <option value="">(no account_id: the only active account, or the one active Facebook Page)</option>
+          {(accounts || []).filter(a => a.is_active).map(a => <option key={a.id} value={a.id}>{a.platform}: {a.page_name || a.page_id}</option>)}
         </select>
       </label>
+      {accounts === null && (
+        <label className="block">Account id (editors cannot list accounts: paste it, or leave empty)
+          <input className={input} value={accountId} onChange={e => setAccountId(e.target.value.trim())} placeholder="uuid from section 1, as testadmin" />
+        </label>
+      )}
+      {instagram && (
+        <div className="p-2 bg-pink-50 border border-pink-200 rounded text-xs space-y-1">
+          <div>Instagram: an image is required; the server posts an Instagram-ready JPEG copy (padded, never cropped). The link goes into the caption as text. Caption is cut to 2,200 characters.</div>
+          {!image && <div className="text-red-700 font-medium">No image: the API will refuse this (400). That is expected.</div>}
+          {outside && <div className="text-red-700 font-medium">The image is not in NIIS storage: the API will refuse this (400). That is expected.</div>}
+          {!isSimAccount(account) && <div className="text-red-700 font-medium">Real Instagram account: the tester blocks the send, the post ends as failed with "Blocked by the local tester". Nothing reaches Instagram.</div>}
+        </div>
+      )}
       <label className="block">Message (empty = title + summary; the link is added by the backend)
         <textarea className={input} rows={3} value={message} onChange={e => setMsg(e.target.value)} />
       </label>
@@ -204,12 +267,12 @@ function PostForm({ api, content, accounts, onDone, setMessage }) {
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={includeImage} onChange={e => setIncludeImage(e.target.checked)} /> Include image (featured image)
       </label>
-      <Btn disabled={busy} onClick={submit} className="bg-blue-600! text-white! border-blue-700!">Post to Facebook</Btn>
+      <Btn disabled={busy} onClick={submit} className={instagram ? 'bg-pink-600! text-white! border-pink-700!' : 'bg-blue-600! text-white! border-blue-700!'}>Post to {target}</Btn>
     </div>
   )
 }
 
-function Contents({ api, accounts, onPosted, setMessage }) {
+function Contents({ api, accounts, onPosted, setMessage, storageBase }) {
   const [items, setItems] = useState([])
   const [selected, setSelected] = useState(null)
   const [busy, run] = useAction(setMessage)
@@ -230,21 +293,26 @@ function Contents({ api, accounts, onPosted, setMessage }) {
   return (
     <Section title="2. Content" right={<Btn onClick={load}>Reload</Btn>}>
       <table className="w-full text-sm">
-        <thead><tr className="text-left border-b"><th>Title</th><th>Status</th><th></th></tr></thead>
+        <thead><tr className="text-left border-b"><th>Image</th><th>Title</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {items.map(c => (
             <tr key={c.id} className={`border-b ${selected?.id === c.id ? 'bg-blue-50' : ''}`}>
+              <td className="py-1 w-16">
+                {c.featured_image_url
+                  ? <img src={c.featured_image_url} alt="" className="h-10 max-w-14 border bg-gray-100" title={c.featured_image_url} />
+                  : <span className="text-xs text-gray-400">none</span>}
+              </td>
               <td className="py-1">{c.title}<div className="text-xs text-gray-500">{c.slug}</div></td>
               <td><Badge value={c.status} /></td>
               <td className="space-x-1 whitespace-nowrap text-right">
-                <Btn onClick={() => setSelected(selected?.id === c.id ? null : c)}>{selected?.id === c.id ? 'Close' : 'Post to Facebook...'}</Btn>
+                <Btn onClick={() => setSelected(selected?.id === c.id ? null : c)}>{selected?.id === c.id ? 'Close' : 'Post...'}</Btn>
                 {c.status === 'pending_review' && <Btn disabled={busy} onClick={() => approve(c)}>Approve (editor)</Btn>}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {selected && <PostForm api={api} content={selected} accounts={accounts} onDone={onPosted} setMessage={setMessage} />}
+      {selected && <PostForm key={selected.id} api={api} content={selected} accounts={accounts} onDone={onPosted} setMessage={setMessage} storageBase={storageBase} />}
     </Section>
   )
 }
@@ -288,10 +356,11 @@ function Posts({ api, refreshKey, setMessage }) {
       {posts.length === 0 && <p className="text-sm text-gray-600">No posts yet.</p>}
       {posts.length > 0 && (
         <table className="w-full text-sm">
-          <thead><tr className="text-left border-b"><th>Content</th><th>Status</th><th>When</th><th>Facebook</th><th>Reactions / comments / shares</th><th></th></tr></thead>
+          <thead><tr className="text-left border-b"><th>Platform</th><th>Content</th><th>Status</th><th>When</th><th>Post</th><th>Reactions (likes) / comments / shares</th><th></th></tr></thead>
           <tbody>
             {posts.map(p => (
               <tr key={p.id} className="border-b align-top">
+                <td className="py-1"><PlatformBadge value={p.platform} /></td>
                 <td className="py-1">{p.content_title}<div className="text-xs text-gray-500">{p.page_name}</div></td>
                 <td>
                   <Badge value={p.status} />
@@ -306,12 +375,14 @@ function Posts({ api, refreshKey, setMessage }) {
                 </td>
                 <td className="text-xs">
                   {p.permalink ? <a className="text-blue-700 underline" href={p.permalink} target="_blank" rel="noreferrer">open post</a> : '-'}
+                  {p.external_id.startsWith('SIMM-') && <div className="text-pink-700">simulated - not on Instagram</div>}
                   <div className="text-gray-500">{p.external_id}</div>
                 </td>
                 <td className="text-xs">
                   {p.metrics_updated_at
-                    ? `${p.reactions_count ?? 'n/a'} / ${p.comments_count ?? 'n/a'} / ${p.shares_count}`
+                    ? `${p.reactions_count ?? 'n/a'} / ${p.comments_count ?? 'n/a'} / ${p.shares_count ?? 'n/a'}`
                     : 'not fetched yet'}
+                  {p.platform === 'instagram' && <div className="text-gray-500">Instagram: likes / comments, no shares</div>}
                 </td>
                 <td className="whitespace-nowrap space-x-1">
                   {p.status === 'scheduled' && <Btn onClick={() => act('DELETE', `/api/v1/admin/cms/content/${p.content_id}/social-posts/${p.id}/`, 'Cancelled')}>Cancel</Btn>}
@@ -353,6 +424,7 @@ export default function App() {
   const [message, setMessage] = useState(null)
   const [accounts, setAccounts] = useState(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [sim, setSim] = useState(null)
   const [tab, setTab] = useState(() => localStorage.getItem('niis-tab') || 'media')
 
   useEffect(() => { localStorage.setItem('niis-tab', tab) }, [tab])
@@ -387,7 +459,7 @@ export default function App() {
       <header className="space-y-2">
         <h1 className="text-xl font-bold">NIIS API Tester <span className="text-sm font-normal text-gray-500">(local testing only - own database and storage, never production)</span></h1>
         <div className="flex gap-1">
-          {[['media', 'Media library (#26)'], ['social', 'Social posting (row 57)']].map(([key, label]) => (
+          {[['media', 'Media library (#26)'], ['social', 'Social posting (row 57)'], ['recaptcha', 'Mobile reCAPTCHA']].map(([key, label]) => (
             <button key={key} onClick={() => { setTab(key); setMessage(null) }}
               className={`px-3 py-1 rounded-t border text-sm ${tab === key ? 'bg-white border-gray-400 border-b-white font-medium' : 'bg-gray-100 border-gray-300'}`}>{label}</button>
           ))}
@@ -395,7 +467,7 @@ export default function App() {
         <label className="flex items-center gap-2 text-sm">API base
           <input className="border border-gray-400 rounded px-2 py-1 w-72" value={base} onChange={e => setBase(e.target.value)} />
         </label>
-        <Login api={api} user={user} onLogin={onLogin} onLogout={onLogout} setMessage={setMessage} tab={tab} />
+        {tab !== 'recaptcha' && <Login api={api} user={user} onLogin={onLogin} onLogout={onLogout} setMessage={setMessage} tab={tab} />}
         {message && (
           <div className={`text-sm p-2 rounded ${message.ok ? 'bg-green-100 text-green-900' : 'bg-red-100 text-red-900'}`}>
             {message.text} <button className="ml-2 underline" onClick={() => setMessage(null)}>dismiss</button>
@@ -406,11 +478,13 @@ export default function App() {
       {token && tab === 'media' && <MediaLibrary key={token} api={api} base={base} token={token} user={user} setMessage={setMessage} />}
       {token && tab === 'social' && (
         <>
-          <Accounts api={api} accounts={accounts} reload={loadAccounts} setMessage={setMessage} />
-          <Contents api={api} accounts={accounts} onPosted={() => setRefreshKey(k => k + 1)} setMessage={setMessage} />
+          <Accounts api={api} accounts={accounts} reload={loadAccounts} setMessage={setMessage} sim={sim} />
+          <Contents api={api} accounts={accounts} onPosted={() => setRefreshKey(k => k + 1)} setMessage={setMessage} storageBase={sim?.storage_base} />
           <Posts api={api} refreshKey={refreshKey} setMessage={setMessage} />
+          <InstagramSim api={api} onChange={setSim} onRan={() => { setRefreshKey(k => k + 1); loadAccounts() }} setMessage={setMessage} refreshKey={refreshKey} />
         </>
       )}
+      {tab === 'recaptcha' && <MobileRecaptcha base={base} onLog={onLog} setMessage={setMessage} />}
       <Log entries={log} clear={() => setLog([])} />
     </div>
   )

@@ -16,7 +16,8 @@ function errorText(data) {
 export { errorText }
 
 export function makeApi(base, token, onLog) {
-  return async function call(method, path, body) {
+  // `extraHeaders`: e.g. the mobile app's X-Platform / X-Recaptcha-Token.
+  return async function call(method, path, body, extraHeaders) {
     const url = base.replace(/\/$/, '') + path
     // FormData (file uploads) goes as multipart: the browser sets the boundary.
     const isForm = body instanceof FormData
@@ -27,6 +28,7 @@ export function makeApi(base, token, onLog) {
         headers: {
           ...(isForm ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(extraHeaders || {}),
         },
         body: body === undefined ? undefined : (isForm ? body : JSON.stringify(body)),
       })
